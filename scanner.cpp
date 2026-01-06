@@ -32,16 +32,25 @@ string final_decision_text = "[OK] CLEAN FILE";
 
 /* ---------------- PATH EXCLUSIONS ---------------- */
 bool should_skip_path(const fs::path& p) {
-    static const vector<string> skip_paths = {
+    static const vector<fs::path> skip_paths = {
         "/proc", "/sys", "/dev", "/run", "/snap", "/tmp", "/home/kichu/vistra1"
     };
 
     for (const auto& skip : skip_paths) {
-        if (p.string().rfind(skip, 0) == 0)
+        // check if p is the skip folder or inside it
+        if (p == skip || p.string().find(skip.string() + "/") == 0) {
             return true;
+        }
+
+        // Ignore vistra1 folder and all contents
+        if (p.string().find("/vistra1/") != string::npos || p.filename() == "vistra1")
+            return true;
+
     }
+
     return false;
 }
+
 
 /* ---------------- LOGGING ---------------- */
 void log_detection_event(
