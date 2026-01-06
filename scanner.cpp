@@ -8,34 +8,32 @@
 #include <string>
 #include <ctime>
 #include <vector>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 using namespace std;
 namespace fs = filesystem;
 
-
+/* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {
     string file_path;
 };
 
-
-
 /* ---------------- CONFIG ---------------- */
-
 #define DELETE_THRESHOLD 150
 #define QUARANTINE_THRESHOLD 70
 
 /* ---------------- GLOBAL SCAN STATE ---------------- */
-
 int total_severity = 0;
 string suggested_action = "ignore";
 map<string, int> matched_rules;
 string final_decision_text = "[OK] CLEAN FILE";
 
 /* ---------------- PATH EXCLUSIONS ---------------- */
-
 bool should_skip_path(const fs::path& p) {
     static const vector<string> skip_paths = {
-        "/proc", "/sys", "/dev", "/run", "/snap", "/tmp"
+        "/proc", "/sys", "/dev", "/run", "/snap", "/tmp", "/home/kichu/vistra1"
     };
 
     for (const auto& skip : skip_paths) {
@@ -46,7 +44,6 @@ bool should_skip_path(const fs::path& p) {
 }
 
 /* ---------------- LOGGING ---------------- */
-
 void log_detection_event(
     const string& rule_name,
     const string& file_path,
@@ -69,7 +66,6 @@ void log_detection_event(
 }
 
 /* ---------------- YARA CALLBACK ---------------- */
-
 int yara_callback(
     YR_SCAN_CONTEXT* context,
     int message,
@@ -118,7 +114,6 @@ int yara_callback(
 }
 
 /* ---------------- FILE MOVE (SAFE) ---------------- */
-
 void move_file_to_folder(const fs::path& file, const string& folder) {
     fs::create_directory(folder);
 
@@ -144,7 +139,6 @@ void delete_file_simulated(const fs::path& file) {
 }
 
 /* ---------------- REPORTING ---------------- */
-
 void write_report(const fs::path& file) {
     fs::create_directory("Reports");
     string report_name = "Reports/" + file.filename().string() + "_report.txt";
@@ -178,8 +172,21 @@ void write_report(const fs::path& file) {
     cout << "  [✓] Report saved: " << report_name << endl;
 }
 
-/* ---------------- MAIN ---------------- */
+/* ---------------- LIVE SPINNER ---------------- */
+atomic<bool> scanning_done(false);
 
+void spinner() {
+    const char* spin_chars = "|/-\\";
+    int i = 0;
+    while (!scanning_done.load()) {
+        cout << "\r[*] Scanning... " << spin_chars[i % 4] << flush;
+        i++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    cout << "\r"; // clear spinner line
+}
+
+/* ---------------- MAIN ---------------- */
 int main() {
     const string SCAN_DIR = "/";      // Entire VM
     const string RULE_DIR = "Yara";   // Your rule directory
@@ -210,7 +217,6 @@ int main() {
     yr_compiler_destroy(compiler);
 
     /* ----------- RECURSIVE SCAN ----------- */
-
     for (const auto& entry : fs::recursive_directory_iterator(
              SCAN_DIR,
              fs::directory_options::skip_permission_denied)) {
@@ -223,9 +229,11 @@ int main() {
         matched_rules.clear();
         final_decision_text = "[OK] CLEAN FILE";
 
-        cout << "\n[*] Scanning: " << entry.path() << endl;
         ScanContext scanCtx;
         scanCtx.file_path = entry.path().string();
+
+        scanning_done = false;
+        thread spin_thread(spinner);  // start live spinner
 
         yr_rules_scan_file(
             rules,
@@ -235,6 +243,11 @@ int main() {
             &scanCtx,
             0
         );
+
+        scanning_done = true;
+        spin_thread.join();          // stop spinner
+
+        cout << "[✓] Done scanning: " << entry.path() << endl;
 
         bool needs_action = false;
 
