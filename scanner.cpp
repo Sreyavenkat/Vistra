@@ -1,29 +1,75 @@
 #include <yara.h>
-#include <yara/compiler.h> 
+#include <yara/compiler.h>
 #include <iostream>
-#include <fstream>      // For file output (reporting)
+#include <fstream>
 #include <filesystem>
 #include <map>
 #include <cstring>
 #include <string>
-#include <ctime>        // For timestamp in report
+#include <ctime>
+#include <vector>
+
 using namespace std;
 namespace fs = filesystem;
 
 
-// Explicitly define the constant if <yara/compiler.h> doesn't expose it correctly
-#ifndef YR_COMPILER_ERROR
-#define YR_COMPILER_ERROR 2 
-#endif 
-#define deleteThreshold 150
-#define quarantineThreshold 70
-/* Global scan state (reset per file) */
+struct ScanContext {
+    string file_path;
+};
+
+
+
+/* ---------------- CONFIG ---------------- */
+
+#define DELETE_THRESHOLD 150
+#define QUARANTINE_THRESHOLD 70
+
+/* ---------------- GLOBAL SCAN STATE ---------------- */
+
 int total_severity = 0;
 string suggested_action = "ignore";
 map<string, int> matched_rules;
-string final_decision_text = "[OK] CLEAN FILE"; // New global for reporting
+string final_decision_text = "[OK] CLEAN FILE";
+
+/* ---------------- PATH EXCLUSIONS ---------------- */
+
+bool should_skip_path(const fs::path& p) {
+    static const vector<string> skip_paths = {
+        "/proc", "/sys", "/dev", "/run", "/snap", "/tmp"
+    };
+
+    for (const auto& skip : skip_paths) {
+        if (p.string().rfind(skip, 0) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* ---------------- LOGGING ---------------- */
+
+void log_detection_event(
+    const string& rule_name,
+    const string& file_path,
+    const string& action,
+    int severity
+) {
+    fs::create_directory("Logs");
+    ofstream log("Logs/detections.log", ios::app);
+    if (!log.is_open()) return;
+
+    time_t now = time(nullptr);
+    char buf[64];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+
+    log << buf << " | "
+        << rule_name << " | "
+        << file_path << " | "
+        << action << " | "
+        << severity << "\n";
+}
 
 /* ---------------- YARA CALLBACK ---------------- */
+
 int yara_callback(
     YR_SCAN_CONTEXT* context,
     int message,
@@ -32,6 +78,7 @@ int yara_callback(
 ) {
     if (message == CALLBACK_MSG_RULE_MATCHING) {
         YR_RULE* rule = (YR_RULE*)message_data;
+        ScanContext* scanCtx = (ScanContext*)user_data;
 
         int severity = 0;
         string action = "ignore";
@@ -51,260 +98,166 @@ int yara_callback(
         total_severity += severity;
         matched_rules[rule->identifier] = severity;
 
-        if (action != "ignore") {
+        if (severity >= QUARANTINE_THRESHOLD && action != "ignore") {
             suggested_action = action;
         }
 
-        cout << "  [+] Matched rule: "
-                  << rule->identifier
-                  << " | severity=" << severity
-                  << " | action=" << action
-                  << endl;
+        log_detection_event(
+            rule->identifier,
+            scanCtx->file_path,
+            action,
+            severity
+        );
+
+        cout << "  [+] Rule matched: "
+             << rule->identifier
+             << " | severity=" << severity
+             << " | action=" << action << endl;
     }
     return CALLBACK_CONTINUE;
 }
 
-/* ---------------- QUARANTINE / DELETED MOVE ---------------- */
+/* ---------------- FILE MOVE (SAFE) ---------------- */
 
-// New function for moving files to a specific destination folder
-void move_file_to_folder(const fs::path& file, const string& folder_name) {
-    fs::create_directory(folder_name);
-    fs::path dest = fs::path(folder_name) / file.filename();
+void move_file_to_folder(const fs::path& file, const string& folder) {
+    fs::create_directory(folder);
+
+    fs::path dest = fs::path(folder) /
+        (file.stem().string() + "_" +
+         to_string(time(nullptr)) +
+         file.extension().string());
 
     try {
         fs::rename(file, dest);
-        cout << "  [→] Moved to " << folder_name << "\n";
+        cout << "  [→] Moved to " << folder << endl;
     } catch (...) {
-        cerr << "  [!] Failed to move file to " << folder_name << "\n";
+        cerr << "  [!] Failed to move file\n";
     }
 }
 
-// Renamed and repurposed the old quarantine function
 void quarantine_file(const fs::path& file) {
     move_file_to_folder(file, "Quarantine");
 }
 
-// New function to simulate deletion by moving to a "Deleted" folder
 void delete_file_simulated(const fs::path& file) {
     move_file_to_folder(file, "Deleted");
 }
-
 
 /* ---------------- REPORTING ---------------- */
 
 void write_report(const fs::path& file) {
     fs::create_directory("Reports");
-    string report_filename = "Reports/" + file.filename().string() + "_report.txt";
-    ofstream report_file(report_filename);
+    string report_name = "Reports/" + file.filename().string() + "_report.txt";
+    ofstream report(report_name);
 
-    // Get current time
-    time_t rawtime;
-    struct tm * timeinfo;
-    char buffer[80];
-    time(&rawtime);
-    timeinfo = localtime(&rawtime);
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-    string timestamp(buffer);
+    time_t now = time(nullptr);
+    char buf[64];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
 
-
-    report_file << "##########################################\n";
-    report_file << "## YARA SCAN REPORT\n";
-    report_file << "##########################################\n";
-    report_file << "Scan Time:     " << timestamp << "\n";
-    report_file << "File Scanned:  " << file.string() << "\n";
-    report_file << "File Size:     " << fs::file_size(file) << " bytes\n";
-    report_file << "------------------------------------------\n";
-    report_file << "Decision:      " << final_decision_text << "\n";
-    report_file << "Total Severity:" << total_severity << "\n";
-    report_file << "Action Taken:  ";
-
-    if (total_severity >= deleteThreshold) {
-        report_file << "Moved to Deleted (Simulated Delete)\n";
-    } else if (total_severity >= quarantineThreshold || suggested_action == "quarantine") {
-        report_file << "Moved to Quarantine\n";
-    } else {
-        report_file << "Ignored (Clean)\n";
-    }
+    report << "##########################################\n";
+    report << "YARA SCAN REPORT\n";
+    report << "##########################################\n";
+    report << "Scan Time:     " << buf << "\n";
+    report << "File:          " << file << "\n";
+    report << "Decision:      " << final_decision_text << "\n";
+    report << "Total Severity:" << total_severity << "\n\n";
 
     if (!matched_rules.empty()) {
-        report_file << "\nMATCHED RULES:\n";
+        report << "Matched Rules:\n";
         for (const auto& r : matched_rules) {
-            report_file << "  - Rule: " << r.first 
-                        << " | Severity: " << r.second << "\n";
+            report << "  - " << r.first
+                   << " (severity " << r.second << ")\n";
         }
     } else {
-        report_file << "\nNo rules matched.\n";
+        report << "No rules matched.\n";
     }
-    report_file << "##########################################\n";
 
-    cout << "  [✓] Report saved to " << report_filename << "\n";
+    report << "##########################################\n";
+    report.close();
+
+    cout << "  [✓] Report saved: " << report_name << endl;
 }
-
-
-/* ---------------- YARA COMPILER CALLBACK (Unchanged) ---------------- */
-// ... (Compiler callback struct and function are moved here)
-
-struct CompilerErrorInfo {
-    string message;
-    string rule_file;
-    int line = 0;
-    bool had_error = false;
-};
-
-CompilerErrorInfo g_compiler_error;
-
-void compiler_callback(
-    int error_level,
-    const char* file_name,
-    int line_number,
-    const YR_RULE* rule, 
-    const char* message,
-    void* user_data
-) {
-    if (error_level == YR_COMPILER_ERROR && !g_compiler_error.had_error) {
-        g_compiler_error.message = message;
-        g_compiler_error.rule_file = file_name ? file_name : "N/A"; 
-        g_compiler_error.line = line_number;
-        g_compiler_error.had_error = true;
-        (void)rule; 
-    }
-}
-
 
 /* ---------------- MAIN ---------------- */
 
 int main() {
-    const string SCAN_DIR = "Files";
-    const string RULE_DIR = "Yara";
-
-    if (!fs::exists(SCAN_DIR)) {
-        cerr << "[!] Files directory not found\n";
-        return 1;
-    }
-
-    if (!fs::exists(RULE_DIR)) {
-        cerr << "[!] Yara rule directory not found\n";
-        return 1;
-    }
+    const string SCAN_DIR = "/";      // Entire VM
+    const string RULE_DIR = "Yara";   // Your rule directory
 
     yr_initialize();
 
     YR_COMPILER* compiler = nullptr;
     yr_compiler_create(&compiler);
-    
-    yr_compiler_set_callback(compiler, compiler_callback, nullptr);
 
-    /* Load YARA rules (Unchanged logic) */
     for (const auto& rule : fs::directory_iterator(RULE_DIR)) {
         if (!rule.is_regular_file()) continue;
-        g_compiler_error.had_error = false;
-        
+
         FILE* fp = fopen(rule.path().c_str(), "r");
         if (!fp) continue;
-        
-        const char* rule_path_c_str = rule.path().c_str(); 
 
-       int res = yr_compiler_add_file(
-            compiler, 
-            fp, 
-            nullptr, 
-            rule_path_c_str
-        );
-        
-        fclose(fp);
-
-        if (res != ERROR_SUCCESS || g_compiler_error.had_error) {
-            cerr << "\n[!!!] FAILED TO COMPILE RULE\n";
-            cerr << "[!] File: " << rule.path() << " | Error Code: " << res << endl;
-            
-            if (g_compiler_error.had_error) { 
-                cerr << "    Compilation Error: "
-                          << g_compiler_error.message
-                          << " on line " << g_compiler_error.line
-                          << " (In file: " << g_compiler_error.rule_file << ")"
-                          << endl;
-            } else {
-                 cerr << "    Note: Rule failed compilation, but no specific error message was captured. Rule may contain invalid characters.\n";
-            }
-            
+        if (yr_compiler_add_file(compiler, fp, nullptr, rule.path().c_str()) != ERROR_SUCCESS) {
+            cerr << "[!] Failed to compile rule: " << rule.path() << endl;
+            fclose(fp);
             yr_compiler_destroy(compiler);
             yr_finalize();
-            return 1; 
+            return 1;
         }
+        fclose(fp);
     }
-
 
     YR_RULES* rules = nullptr;
-    if (yr_compiler_get_rules(compiler, &rules) != ERROR_SUCCESS || !rules) {
-        if (!g_compiler_error.had_error) {
-             cerr << "[!] Could not finalize rules. Check rule files.\n";
-        }
-       
-        yr_compiler_destroy(compiler);
-        yr_finalize();
-        return 1;
-    }
-    
+    yr_compiler_get_rules(compiler, &rules);
     yr_compiler_destroy(compiler);
 
+    /* ----------- RECURSIVE SCAN ----------- */
 
-    /* Scan files (CENTRALIZED REPORTING AND ACTION) */
-    for (const auto& file : fs::directory_iterator(SCAN_DIR)) {
-        if (!file.is_regular_file()) continue;
+    for (const auto& entry : fs::recursive_directory_iterator(
+             SCAN_DIR,
+             fs::directory_options::skip_permission_denied)) {
 
-        // 1. Reset variables
+        if (!entry.is_regular_file()) continue;
+        if (should_skip_path(entry.path())) continue;
+
         total_severity = 0;
         suggested_action = "ignore";
         matched_rules.clear();
-        final_decision_text = "[OK] CLEAN FILE"; 
+        final_decision_text = "[OK] CLEAN FILE";
 
-        cout << "\n[*] Scanning: " << file.path() << endl;
+        cout << "\n[*] Scanning: " << entry.path() << endl;
+        ScanContext scanCtx;
+        scanCtx.file_path = entry.path().string();
 
-        // Perform the scan (This was missing from the code you showed in the last turn)
         yr_rules_scan_file(
             rules,
-            file.path().c_str(),
+            entry.path().c_str(),
             0,
             yara_callback,
-            nullptr,
+            &scanCtx,
             0
         );
 
-        // 2. Determine the decision and set final text
-        bool needs_action = true;
-        
-        if (total_severity >= deleteThreshold) {
+        bool needs_action = false;
+
+        if (total_severity >= DELETE_THRESHOLD) {
             final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
+            needs_action = true;
         }
-        else if (total_severity >= quarantineThreshold || suggested_action == "quarantine") {
+        else if (total_severity >= QUARANTINE_THRESHOLD ||
+                 suggested_action == "quarantine") {
             final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
-        }
-        else {
-            needs_action = false;
+            needs_action = true;
         }
 
-        // 3. Print summary to console
-        cout << final_decision_text << "\n";
-        if (!matched_rules.empty()) {
-            cout << "     Matched rules:\n";
-            for (const auto& r : matched_rules) {
-                cout << "       - "
-                          << r.first
-                          << " (severity " << r.second << ")\n";
-            }
-        }
-        
-        // 4. Write the report (MUST HAPPEN BEFORE THE FILE MOVE)
-        write_report(file.path());
+        cout << final_decision_text << endl;
 
-        // 5. Take the final action
-        if (total_severity >= deleteThreshold) {
-            delete_file_simulated(file.path()); // Move to Deleted folder
+        write_report(entry.path());
+
+        if (needs_action) {
+            if (total_severity >= DELETE_THRESHOLD)
+                delete_file_simulated(entry.path());
+            else
+                quarantine_file(entry.path());
         }
-        else if (needs_action) { // Only quarantine if action was recommended
-            quarantine_file(file.path()); // Move to Quarantine folder
-        }
-      
     }
 
     yr_rules_destroy(rules);
