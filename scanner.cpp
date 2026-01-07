@@ -69,7 +69,7 @@ bool should_skip_path(const fs::path& p) {
 
 /* ---------------- LOGGING ---------------- */
 void log_detection_event(
-    const string& rule_name,
+    //const string& rule_name,
     const string& file_path,
     const string& action,
     int severity
@@ -83,7 +83,6 @@ void log_detection_event(
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
 
     log << buf << " | "
-        << rule_name << " | "
         << file_path << " | "
         << action << " | "
         << severity << "\n";
