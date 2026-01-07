@@ -33,19 +33,38 @@ string final_decision_text = "[OK] CLEAN FILE";
 /* ---------------- PATH EXCLUSIONS ---------------- */
 bool should_skip_path(const fs::path& p) {
     static const vector<fs::path> skip_paths = {
-        "/proc", "/sys", "/dev", "/run", "/snap", "/tmp", "/home/kichu/vistra","/usr", "/boot", "/var/log", "/var/cache"
+        "/proc",
+        "/sys",
+        "/dev",
+        "/run",
+        "/snap",
+        "/tmp",
+        "/usr",
+        "/boot",
+        "/var/log",
+        "/var/cache",
+        "/home/sreyav/vistra1"
     };
 
-    for (const auto& skip : skip_paths) {
-        // check if p is the skip folder or inside it
-        if (p == skip || p.string().find(skip.string() + "/") == 0) {
-            return true;
-        }
-
+    fs::path abs_p;
+    try {
+        abs_p = fs::weakly_canonical(p);
+    } catch (...) {
+        return false;
     }
 
+    for (const auto& skip : skip_paths) {
+        fs::path abs_skip = fs::weakly_canonical(skip);
+
+        // if p == skip OR p is inside skip
+        if (abs_p == abs_skip ||
+            abs_p.string().starts_with(abs_skip.string() + "/")) {
+            return true;
+        }
+    }
     return false;
 }
+
 
 
 /* ---------------- LOGGING ---------------- */
@@ -275,8 +294,8 @@ int main() {
             needs_action = true;
             log_detection_event(
             //rule->identifier,
-            scanCtx->file_path,
-            suggested_action,
+            scanCtx.file_path,
+            "Delete",
             total_severity
         );
         }
@@ -286,8 +305,8 @@ int main() {
             needs_action = true;
             log_detection_event(
             //rule->identifier,
-            scanCtx->file_path,
-            suggested_action,
+            scanCtx.file_path,
+            "Quarantine",
             total_severity
             );
         }
