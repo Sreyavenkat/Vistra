@@ -22,7 +22,7 @@ struct ScanContext {
 
 /* ---------------- CONFIG ---------------- */
 #define DELETE_THRESHOLD 150
-#define QUARANTINE_THRESHOLD 70
+#define QUARANTINE_THRESHOLD 85
 
 /* ---------------- GLOBAL SCAN STATE ---------------- */
 int total_severity = 0;
@@ -33,7 +33,7 @@ string final_decision_text = "[OK] CLEAN FILE";
 /* ---------------- PATH EXCLUSIONS ---------------- */
 bool should_skip_path(const fs::path& p) {
     static const vector<fs::path> skip_paths = {
-        "/proc", "/sys", "/dev", "/run", "/snap", "/tmp", "/home/kichu/vistra1"
+        "/proc", "/sys", "/dev", "/run", "/snap", "/tmp", "/home/kichu/vistra","/usr", "/boot", "/var/log", "/var/cache"
     };
 
     for (const auto& skip : skip_paths) {
@@ -103,17 +103,12 @@ int yara_callback(
             suggested_action = action;
         }
 
-        log_detection_event(
-            rule->identifier,
-            scanCtx->file_path,
-            action,
-            severity
-        );
+        
 
-        cout << "  [+] Rule matched: "
-             << rule->identifier
-             << " | severity=" << severity
-             << " | action=" << action << endl;
+        // cout << "  [+] Rule matched: "
+        //      << rule->identifier
+        //      << " | severity=" << severity
+        //      << " | action=" << action << endl;
     }
     return CALLBACK_CONTINUE;
 }
@@ -222,13 +217,23 @@ int main() {
     yr_compiler_destroy(compiler);
 
     /* ----------- RECURSIVE SCAN ----------- */
-    for (const auto& entry : fs::recursive_directory_iterator(
+    for ( auto it = fs::recursive_directory_iterator(
              SCAN_DIR,
-             fs::directory_options::skip_permission_denied)) {
+             fs::directory_options::skip_permission_denied);
+             
+             it!= fs::recursive_directory_iterator(); ++it){
+                
+        const auto& entry = *it;
+
+        if(should_skip_path(entry.path())){
+            it.disable_recursion_pending();
+            continue;
+        }
+             
 
 
         if (!entry.is_regular_file()) continue;
-        if (should_skip_path(entry.path())) continue;
+       // if (should_skip_path(entry.path())) continue;
 
          // Print the exact file path being scanned
         try {
@@ -268,11 +273,23 @@ int main() {
         if (total_severity >= DELETE_THRESHOLD) {
             final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
             needs_action = true;
+            log_detection_event(
+            //rule->identifier,
+            scanCtx->file_path,
+            suggested_action,
+            total_severity
+        );
         }
         else if (total_severity >= QUARANTINE_THRESHOLD ||
                  suggested_action == "quarantine") {
             final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
             needs_action = true;
+            log_detection_event(
+            //rule->identifier,
+            scanCtx->file_path,
+            suggested_action,
+            total_severity
+            );
         }
 
         cout << final_decision_text << endl;
