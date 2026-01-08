@@ -1,24 +1,17 @@
-rule Linux_Ransomware_TOR_Payment_Fixed{
+rule Linux_Ransomware_TOR_Payment
+{
     meta:
-        description = "TOR_based ransomware payment infrastructure"
-        confidence = "high"
-        severity = 90
-        layer = "static"
-        os = "linux"
-        action = "delete"
+        severity = 45
+        action = "quarantine"
+
     strings:
-        // Indicators for a TOR darknet address
-        $tor_onion = ".onion" ascii nocase
-        $tor_http  = "http://" ascii nocase
-        
-        // Indicators related to payment and decryption
-        $key_pay   = "payment" ascii nocase
-        $key_dec   = "decrypt" ascii nocase
-        
-        // Additional common ransomware strings
-        $key_btc   = "bitcoin" ascii wide nocase
-        $key_wallet= "wallet" ascii wide nocase
+        $tor1 = ".onion"
+        $tor2 = "torproject"
+        $pay1 = "bitcoin"
+        $pay2 = "monero"
 
     condition:
-        3 of them
+        uint32(0) == 0x464c457f and
+        1 of ($tor*) and
+        1 of ($pay*)
 }

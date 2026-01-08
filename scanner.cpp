@@ -11,6 +11,8 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <algorithm>
+#include <unordered_set>
 
 using namespace std;
 namespace fs = filesystem;
@@ -29,10 +31,10 @@ int total_severity = 0;
 string suggested_action = "ignore";
 map<string, int> matched_rules;
 string final_decision_text = "[OK] CLEAN FILE";
-
-/* ---------------- PATH EXCLUSIONS ---------------- */
-bool should_skip_path(const fs::path& p) {
-    static const vector<fs::path> skip_paths = {
+static const unordered_set<string> ignore_ext = {
+            ".xml", ".symbols", ".list", ".gz", ".xz"
+        };
+static const vector<fs::path> skip_paths = {
         "/proc",
         "/sys",
         "/dev",
@@ -46,6 +48,10 @@ bool should_skip_path(const fs::path& p) {
         "/home/sreyav/vistra1",
         "/home/kichu/vistra1"
     };
+
+/* ---------------- PATH EXCLUSIONS ---------------- */
+bool should_skip_path(const fs::path& p) {
+    
 
     fs::path abs_p;
     try {
@@ -116,7 +122,8 @@ int yara_callback(
             }
         }
 
-        total_severity += severity;
+        /* path-based severity weighting */
+        total_severity += severity * path_severity_multiplier(scanCtx->file_path);
         matched_rules[rule->identifier] = severity;
 
         if (severity >= QUARANTINE_THRESHOLD && action != "ignore") {
@@ -192,6 +199,21 @@ void write_report(const fs::path& file) {
     cout << "  [✓] Report saved: " << report_name << endl;
 }
 
+int path_severity_multiplier(const fs::path& p) {
+    string s = p.string();
+
+    if ((s.rfind("home",0) == 0) || (s.rfind("tmp", 0) == 0))
+        return 1;      // full weight
+
+    if (s.rfind("var",0) == 0)
+        return 0.3;    // reduce confidence
+
+    if (s.rfind("usr",0) == 0)
+        return 0.1;    // very unlikely
+
+    return 1;
+}
+
 /* ---------------- LIVE SPINNER ---------------- */
 atomic<bool> scanning_done(false);
 
@@ -244,7 +266,12 @@ int main() {
              it!= fs::recursive_directory_iterator(); ++it){
                 
         const auto& entry = *it;
-
+        
+        /* This line is to ignore files with certain extensions( cannot be a ransomware) */
+        auto ext = entry.path().extension().string();
+        if (ignore_ext.count(ext)) continue;
+        
+        /* This line is to ignore files and folder which contain garbage data  */
         if(should_skip_path(entry.path())){
             it.disable_recursion_pending();
             continue;
@@ -253,7 +280,6 @@ int main() {
 
 
         if (!entry.is_regular_file()) continue;
-       // if (should_skip_path(entry.path())) continue;
 
          // Print the exact file path being scanned
         try {
