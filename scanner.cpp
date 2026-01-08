@@ -43,7 +43,8 @@ bool should_skip_path(const fs::path& p) {
         "/boot",
         "/var/log",
         "/var/cache",
-        "/home/sreyav/vistra1"
+        "/home/sreyav/vistra1",
+        "/home/kichu/vistra1"
     };
 
     fs::path abs_p;
