@@ -27,7 +27,7 @@ struct ScanContext {
 #define QUARANTINE_THRESHOLD 85
 
 /* ---------------- GLOBAL SCAN STATE ---------------- */
-int total_severity = 0;
+double total_severity = 0;
 string suggested_action = "ignore";
 map<string, int> matched_rules;
 string final_decision_text = "[OK] CLEAN FILE";
@@ -51,16 +51,16 @@ static const vector<fs::path> skip_paths = {
 
 
 /*----------- PATH SEVERITY MULTIPLIER ----------------*/
-int path_severity_multiplier(const fs::path& p) {
+double path_severity_multiplier(const fs::path& p) {
     string s = p.string();
 
-    if ((s.rfind("home",0) == 0) || (s.rfind("tmp", 0) == 0))
+    if ((s.rfind("/home",0) == 0) || (s.rfind("/tmp", 0) == 0))
         return 1;      // full weight
 
-    if (s.rfind("var",0) == 0)
+    if (s.rfind("/var",0) == 0)
         return 0.3;    // reduce confidence
 
-    if (s.rfind("usr",0) == 0)
+    if (s.rfind("/usr",0) == 0)
         return 0.1;    // very unlikely
 
     return 1;
