@@ -344,12 +344,12 @@ int main() {
 
         write_report(entry.path());
 
-        if (needs_action) {
-            if (total_severity >= DELETE_THRESHOLD)
-                delete_file_simulated(entry.path());
-            else
-                quarantine_file(entry.path());
-        }
+        // if (needs_action) {
+        //     if (total_severity >= DELETE_THRESHOLD)
+        //         delete_file_simulated(entry.path());
+        //     else
+        //         quarantine_file(entry.path());
+        // }
     }
 
     yr_rules_destroy(rules);
