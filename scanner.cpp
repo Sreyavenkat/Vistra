@@ -273,7 +273,7 @@ int main() {
                 
         const auto& entry = *it;
 
-        total_files_scanned++; //increment total scanned
+        
         
         /* This line is to ignore files with certain extensions( cannot be a ransomware) */
         auto ext = entry.path().extension().string();
@@ -288,6 +288,8 @@ int main() {
 
 
         if (!entry.is_regular_file()) continue;
+
+        total_files_scanned++; //increment total scanned
 
          // Print the exact file path being scanned
         try {
@@ -364,7 +366,7 @@ int main() {
     cout << "\n" << string(45, '=') << endl;
     cout << "           SCAN COMPLETE SUMMARY          " << endl;
     cout << string(45, '=') << endl;
-    cout << " Total Files Encountered:  " << total_files_scanned << endl;
+    cout << " Total Files Scanned:  " << total_files_scanned << endl;
     cout << " Files Flagged Suspicious: " << (total_quarantined + total_deleted) << endl;
     cout << "   -> Quarantined:         " << total_quarantined << endl;
     cout << "   -> Deleted :            " << total_deleted << endl;
