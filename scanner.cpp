@@ -17,6 +17,10 @@
 using namespace std;
 namespace fs = filesystem;
 
+int total_files_scanned = 0;
+int total_quarantined = 0;
+int total_deleted = 0;
+
 /* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {
     string file_path;
@@ -268,6 +272,8 @@ int main() {
              it!= fs::recursive_directory_iterator(); ++it){
                 
         const auto& entry = *it;
+
+        total_files_scanned++; //increment total scanned
         
         /* This line is to ignore files with certain extensions( cannot be a ransomware) */
         auto ext = entry.path().extension().string();
@@ -320,6 +326,7 @@ int main() {
 
         if (total_severity >= DELETE_THRESHOLD) {
             final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
+            total_deleted++;
             needs_action = true;
             log_detection_event(
             //rule->identifier,
@@ -331,6 +338,7 @@ int main() {
         else if (total_severity >= QUARANTINE_THRESHOLD ||
                  suggested_action == "quarantine") {
             final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
+            total_quarantined++;
             needs_action = true;
             log_detection_event(
             //rule->identifier,
@@ -351,6 +359,16 @@ int main() {
         //         quarantine_file(entry.path());
         // }
     }
+
+    /* ----------- FINAL SUMMARY DISPLAY ----------- */
+    cout << "\n" << string(45, '=') << endl;
+    cout << "           SCAN COMPLETE SUMMARY          " << endl;
+    cout << string(45, '=') << endl;
+    cout << " Total Files Encountered:  " << total_files_scanned << endl;
+    cout << " Files Flagged Suspicious: " << (total_quarantined + total_deleted) << endl;
+    cout << "   -> Quarantined:         " << total_quarantined << endl;
+    cout << "   -> Deleted :            " << total_deleted << endl;
+    cout << string(45, '=') << endl;
 
     yr_rules_destroy(rules);
     yr_finalize();
