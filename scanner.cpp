@@ -13,6 +13,7 @@
 #include <chrono>
 #include <algorithm>
 #include <unordered_set>
+#include <iomanip>
 
 using namespace std;
 namespace fs = filesystem;
@@ -20,6 +21,9 @@ namespace fs = filesystem;
 int total_files_scanned = 0;
 int total_quarantined = 0;
 int total_deleted = 0;
+int total_rule_matches = 0;
+
+map<string , int> rule_hit_counts;
 
 /* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {
@@ -125,8 +129,15 @@ int yara_callback(
     void* user_data
 ) {
     if (message == CALLBACK_MSG_RULE_MATCHING) {
+
+        total_rule_matches++;
+
         YR_RULE* rule = (YR_RULE*)message_data;
         ScanContext* scanCtx = (ScanContext*)user_data;
+
+        // Track which specific rule matched
+        string rule_name = rule->identifier;
+        rule_hit_counts[rule_name]++;
 
         int severity = 0;
         string action = "ignore";
@@ -362,15 +373,30 @@ int main() {
         // }
     }
 
+    string top_rule = "None";
+    int max_hits = 0;
+    for (const auto& pair : rule_hit_counts) {
+        if (pair.second > max_hits) {
+            max_hits = pair.second;
+            top_rule = pair.first;
+        }
+    }
+
+    // Calculate Malware Density (Matches per Scanned File)
+    double density = (total_files_scanned > 0) ? (double)total_rule_matches / total_files_scanned : 0;
+
     /* ----------- FINAL SUMMARY DISPLAY ----------- */
-    cout << "\n" << string(45, '=') << endl;
-    cout << "           SCAN COMPLETE SUMMARY          " << endl;
-    cout << string(45, '=') << endl;
-    cout << " Total Files Scanned:  " << total_files_scanned << endl;
-    cout << " Files Flagged Suspicious: " << (total_quarantined + total_deleted) << endl;
-    cout << "   -> Quarantined:         " << total_quarantined << endl;
-    cout << "   -> Deleted :            " << total_deleted << endl;
-    cout << string(45, '=') << endl;
+    cout << "\n" << string(50, '=') << endl;
+    cout << "           DETECTION ANALYTICS SUMMARY          " << endl;
+    cout << string(50, '=') << endl;
+    cout << " Files Scanned:           " << total_files_scanned << endl;
+    cout << " Total YARA Hits:         " << total_rule_matches << endl;
+    cout << " Malware Density:         " << fixed << setprecision(2) << density << " hits/file" << endl;
+    cout << " Most Frequent Pattern:   " << top_rule << " (" << max_hits << " hits)" << endl;
+    cout << string(50, '-') << endl;
+    cout << " Files Quarantined:       " << total_quarantined << endl;
+    cout << " Files Deleted:           " << total_deleted << endl;
+    cout << string(50, '=') << endl;
 
     yr_rules_destroy(rules);
     yr_finalize();
