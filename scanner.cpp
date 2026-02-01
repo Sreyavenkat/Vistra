@@ -247,8 +247,8 @@ void spinner() {
 
 /* ---------------- MAIN ---------------- */
 int main() {
-    const string SCAN_DIR = "/";      // Entire VM
-    const string RULE_DIR = "Yara";   // Your rule directory
+    const string SCAN_DIR = "/";      
+    const string RULE_DIR = "Yara";   
 
     yr_initialize();
 
@@ -258,10 +258,8 @@ int main() {
 
     for (const auto& rule : fs::directory_iterator(RULE_DIR)) {
         if (!rule.is_regular_file()) continue;
-
         FILE* fp = fopen(rule.path().c_str(), "r");
         if (!fp) continue;
-
         if (yr_compiler_add_file(compiler, fp, nullptr, rule.path().c_str()) != ERROR_SUCCESS) {
             cerr << "[!] Failed to compile rule: " << rule.path() << endl;
             fclose(fp);
@@ -276,46 +274,53 @@ int main() {
     yr_compiler_get_rules(compiler, &rules);
     yr_compiler_destroy(compiler);
 
-    /* ----------- 1. PRE-SCAN (Calculate Total) ----------- */
+    /* ----------- 1. DYNAMIC PRE-SCAN (No Hardcoding) ----------- */
     int total_eligible_files = 0;
-    cout << "[*] Pre-scanning filesystem to calculate progress..." << endl;
-
-    for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
-         it != fs::recursive_directory_iterator(); ++it) {
-        
-        const auto& entry = *it;
-        if (should_skip_path(entry.path())) {
-            it.disable_recursion_pending();
-            continue;
-        }
-        // Count only regular files that will actually be scanned
-        if (entry.is_regular_file()) {
-            total_eligible_files++;
-        }
-    }
-    cout << "[+] Found " << total_eligible_files << " files to scan.\n" << endl;
-
-    /* ----------- 2. ACTUAL SCAN (With Hybrid Progress Bar) ----------- */
-    int files_processed = 0;
+    cout << "[*] Calculating total files for progress bar..." << endl;
 
     for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
          it != fs::recursive_directory_iterator(); ++it) {
         
         const auto& entry = *it;
 
-        // Apply filters
+        // Dynamic Filtering - Must match main scan exactly
+        auto ext = entry.path().extension().string();
+        if (ignore_ext.count(ext)) continue;
+
         if (should_skip_path(entry.path())) {
             it.disable_recursion_pending();
             continue;
         }
         if (!entry.is_regular_file()) continue;
 
-        // Increment progress counters
+        total_eligible_files++;
+    }
+    cout << "[+] Found " << total_eligible_files << " eligible files.\n" << endl;
+
+    /* ----------- 2. RECURSIVE SCAN (Preserving Your Logic) ----------- */
+    int files_processed = 0;
+
+    for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
+         it != fs::recursive_directory_iterator(); ++it) {
+                
+        const auto& entry = *it;
+
+        // FILTERS (Mirror of Pre-scan)
+        auto ext = entry.path().extension().string();
+        if (ignore_ext.count(ext)) continue;
+        
+        if (should_skip_path(entry.path())) {
+            it.disable_recursion_pending();
+            continue;
+        }
+        if (!entry.is_regular_file()) continue;
+
+        // Increment dynamic counters
         files_processed++;
         total_files_scanned++; 
-        float progress = (float)files_processed / total_eligible_files * 100;
 
-        // Build the Progress Bar string
+        // Progress Bar Calculation
+        float progress = (total_eligible_files > 0) ? ((float)files_processed / total_eligible_files * 100) : 100.0f;
         int barWidth = 40;
         string bar = "[";
         int pos = barWidth * (progress / 100.0);
@@ -326,30 +331,37 @@ int main() {
         }
         bar += "] " + to_string((int)progress) + "%";
 
-        // Handle path display (truncating if too long)
+        // Hybrid UI: Overwrite line with Bar + Path
         string current_path = entry.path().string();
-        if (current_path.length() > 40) {
-            current_path = "..." + current_path.substr(current_path.length() - 37);
+        if (current_path.length() > 35) {
+            current_path = "..." + current_path.substr(current_path.length() - 32);
         }
+        cout << "\r" << bar << " | Scanning: " << left << setw(35) << current_path << flush;
 
-        // Print Bar + Filename on one line using \r to overwrite
-        cout << "\r" << bar << " | Scanning: " << left << setw(40) << current_path << flush;
-
-        // --- YARA SCAN LOGIC ---
+        // YOUR EXISTING SCAN LOGIC
         total_severity = 0;
         suggested_action = "ignore";
         matched_rules.clear();
+        final_decision_text = "[OK] CLEAN FILE";
 
         ScanContext scanCtx;
         scanCtx.file_path = entry.path().string();
 
+        scanning_done = false;
+        thread spin_thread(spinner); // Preserving your spinner logic
+
         yr_rules_scan_file(rules, entry.path().c_str(), 0, yara_callback, &scanCtx, 0);
 
+        scanning_done = true;
+        spin_thread.join();
+
         if (total_severity >= DELETE_THRESHOLD) {
+            final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
             total_deleted++;
             log_detection_event(scanCtx.file_path, "Delete", total_severity);
         }
         else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
+            final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
             total_quarantined++;
             log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
         }
@@ -357,7 +369,7 @@ int main() {
         write_report(entry.path());
     }
 
-    /* ----------- FINAL SUMMARY DISPLAY ----------- */
+    /* ----------- 3. ANALYTICS (No Hardcoding) ----------- */
     string top_rule = "None";
     int max_hits = 0;
     for (const auto& pair : rule_hit_counts) {
@@ -368,13 +380,15 @@ int main() {
     }
     double density = (total_files_scanned > 0) ? (double)total_rule_matches / total_files_scanned : 0;
 
+    /* ----------- FINAL SUMMARY DISPLAY ----------- */
     cout << "\n\n" << string(50, '=') << endl;
     cout << "           DETECTION ANALYTICS SUMMARY          " << endl;
     cout << string(50, '=') << endl;
-    cout << " Files Scanned:           " << total_files_scanned << endl;
+    cout << " Files Eligible:          " << total_eligible_files << endl;
+    cout << " Files Actually Scanned:  " << total_files_scanned << endl;
     cout << " Total YARA Hits:         " << total_rule_matches << endl;
     cout << " Malware Density:         " << fixed << setprecision(4) << density << " hits/file" << endl;
-    cout << " Most Frequent Pattern:   " << top_rule << " (" << max_hits << " hits)" << endl;
+    cout << " Top Threat Signature:    " << top_rule << " (" << max_hits << " hits)" << endl;
     cout << string(50, '-') << endl;
     cout << " Files Quarantined:       " << total_quarantined << endl;
     cout << " Files Deleted:           " << total_deleted << endl;
