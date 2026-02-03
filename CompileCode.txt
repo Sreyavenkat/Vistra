@@ -1,0 +1,9 @@
+Compile monitor.c:
+    gcc monitor.c -o monitor -lbpf -lelf -lz
+Run monitor
+    sudo ./monitor
+
+Compile scanner.cpp
+    g++ scanner.cpp -o scanner -lyara
+Run scanner
+    ./scanner
