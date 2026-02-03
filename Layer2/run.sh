@@ -14,10 +14,43 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# ---------------- DEPENDENCY CHECK ----------------
+echo "[+] Checking required tools..."
+
+install_deps() {
+    echo "[!] Installing eBPF dependencies..."
+
+    apt update
+
+    # Core build tools
+    apt install -y \
+        clang \
+        llvm \
+        libelf-dev \
+        libbpf-dev
+
+    # Kernel-matched bpftool (virtual package fix)
+    if apt-cache show linux-tools-$(uname -r) >/dev/null 2>&1; then
+        apt install -y linux-tools-$(uname -r)
+    else
+        echo "[!] Exact kernel tools not found, installing generic tools"
+        apt install -y linux-tools-common linux-tools-generic
+    fi
+}
+
+# Install only if something is missing
+if ! command -v clang >/dev/null 2>&1 || \
+   ! command -v bpftool >/dev/null 2>&1; then
+    install_deps
+else
+    echo "[+] All required tools already installed"
+fi
+
+
 # ---------------- GENERATE VMLINUX.H ----------------
 echo "[+] Generating vmlinux.h (if missing)..."
 if [ ! -f "$VMLINUX_H" ]; then
-    bpftool btf dump file $VMLINUX format c > $VMLINUX_H
+    bpftool btf dump file $VMLINUX format c > "$VMLINUX_H"
 fi
 
 # ---------------- COMPILE BPF PROGRAM ----------------
@@ -32,4 +65,4 @@ clang -O2 -g -target bpf \
 echo "[+] Generating skeleton..."
 bpftool gen skeleton "$APP_DIR/$APP.bpf.o" > "$APP_DIR/$APP.skel.h"
 
-
+echo "[✓] Build completed successfully"
