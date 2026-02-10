@@ -49,7 +49,7 @@ const char *ignore_procs[] = {
     "top",
     "htop",
     "journalctl",
-    "free"
+    "free",
 
     NULL
 };
