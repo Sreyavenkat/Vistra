@@ -31,11 +31,17 @@ const char *ignore_procs[] = {
     "NetworkManager",
     "udisksd",
     "dbus-daemon",
+    "sudo"
 
     // Desktop / graphics
     "gnome-shell",
     "KMS thread",
     "VizCompositorTh",
+
+    // Chrome internals
+    "Chrome_ChildIOT",
+    "Chrome_IOThread",
+    "Compositor"
 
     // Short-lived utilities
     "lsblk",
@@ -43,6 +49,7 @@ const char *ignore_procs[] = {
     "top",
     "htop",
     "journalctl",
+    "free"
 
     NULL
 };
