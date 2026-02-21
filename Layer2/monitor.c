@@ -31,7 +31,6 @@ const char *ignore_procs[] = {
     "NetworkManager",
     "udisksd",
     "dbus-daemon",
-    "sudo"
 
     // Desktop / graphics
     "gnome-shell",
@@ -89,7 +88,7 @@ int handle_event(void *ctx, void *data, size_t size)
     struct event *e = data;
 
     // Ignore events from our own monitor process
-    if (should_ignore(e->comm))
+    if (should_ignore(e->comm) && e->ppid == 1)
         return 0;
 
 
