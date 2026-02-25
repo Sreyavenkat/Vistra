@@ -10,6 +10,7 @@
 #define MAX_PATH 256
 
 static volatile sig_atomic_t exiting = 0;
+static pid_t self_pid;
 
 /*------------ IGNORE COMM ------------------*/
 const char *ignore_procs[] = {
@@ -52,6 +53,13 @@ const char *ignore_procs[] = {
 
     NULL
 };
+
+int sensitive_parent(const char *comm) {
+    return !strcmp(comm, "sudo") ||
+           !strcmp(comm, "systemd") ||
+           !strcmp(comm, "cron");
+}
+
 int should_ignore(const char *comm)
 {
     for (int i = 0; ignore_procs[i] != NULL; i++) {
@@ -87,14 +95,13 @@ int handle_event(void *ctx, void *data, size_t size)
 {
     struct event *e = data;
 
+    if (!strcmp(e->comm, "sudo") && strcmp(e->syscall, "execve") != 0) return 0;
+    if (should_ignore(e->comm) && !sensitive_parent(e->comm)) return 0;
     // Ignore events from our own monitor process
-    if (should_ignore(e->comm) && e->ppid == 1)
-        return 0;
-
+    if (e->pid == self_pid) return 0;
 
     FILE *f = fopen("syscall_queue.log", "a");
-    if (!f)
-        return 0;
+    if (!f) return 0;
 
     time_t now = time(NULL);
     char tbuf[64];
@@ -108,18 +115,28 @@ int handle_event(void *ctx, void *data, size_t size)
                 e->fd, e->count);
     }
 
-    if (e->path[0]) {
-        fprintf(f, " | PATH=%s", e->path);
+    if (strcmp(e->syscall, "openat") == 0 ||
+        strcmp(e->syscall, "execve") == 0 ||
+        strcmp(e->syscall, "unlinkat") == 0) {
+
+        if (e->path[0] != '\0')
+            fprintf(f, " | PATH=%s", e->path);
     }
 
-    if (!strcmp(e->syscall, "renameat")) {
-        fprintf(f, " | NEW_PATH=%s", e->new_path);
+    if (strcmp(e->syscall, "renameat") == 0) {
+        if (e->path[0] != '\0')
+            fprintf(f, " | OLD=%s", e->path);
+        if (e->new_path[0] != '\0')
+            fprintf(f, " | NEW=%s", e->new_path);
     }
+
 
     fprintf(f, "\n");
     fclose(f);
     return 0;
 }
+
+
 
 /* -------- MAIN -------- */
 int main()
@@ -127,6 +144,8 @@ int main()
     struct ring_buffer *rb = NULL;
     struct eBPFAgent_bpf *skel = NULL;
     int err;
+
+    self_pid = getpid();
 
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
