@@ -1,0 +1,30 @@
+{
+    "alert_id": "fefc49f9-a4f2-46f1-b1f1-8a339bb03321",
+    "detected_at": "2026-02-26T10:12:03.083108Z",
+    "classification": {
+        "label": "MALICIOUS",
+        "risk_score": 60,
+        "confidence": "HIGH"
+    },
+    "process": {
+        "pid": 15467,
+        "ppid": 11159,
+        "comm": "bash",
+        "exec_path": "/usr/bin/python3",
+        "file_path": "Trigger_Test.py",
+        "first_seen": "2026-02-26T10:12:02.474957Z",
+        "last_seen": "2026-02-26T10:12:03.081271Z",
+        "runtime_seconds": 0.6063141822814941
+    },
+    "behavior_summary": {
+        "rename_count": 0,
+        "unlink_count": 0,
+        "write_bytes": 10500000,
+        "burst_syscalls": 143
+    },
+    "file_activity": {
+        "renamed_files": [],
+        "deleted_files": []
+    },
+    "status": "PENDING"
+}
