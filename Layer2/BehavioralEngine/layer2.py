@@ -7,7 +7,7 @@ from datetime import datetime
 
 LOG_FILE = "Layer2/syscall_queue.log"
 ALERT_DIR = "alerts"
-RISK_THRESHOLD = 70
+RISK_THRESHOLD = 60
 
 BURST_WINDOW_SECONDS = 3
 PROFILE_EXPIRY_SECONDS = 30
@@ -26,6 +26,7 @@ class ProcessProfile:
         self.last_seen = time.time()
 
         self.exec_path = None
+        self.file_path = None
 
         self.open_count = 0
         self.read_bytes = 0
@@ -105,6 +106,7 @@ def write_alert(profile):
             "ppid": profile.ppid,
             "comm": profile.comm,
             "exec_path": profile.exec_path,
+            "file_path":profile.file_path,
             "first_seen": datetime.utcfromtimestamp(profile.first_seen).isoformat() + "Z",
             "last_seen": datetime.utcfromtimestamp(profile.last_seen).isoformat() + "Z",
             "runtime_seconds": profile.last_seen - profile.first_seen
@@ -178,9 +180,6 @@ def run():
             if data.get("FD") in ["1", "2"]:
                 continue
 
-            # Ignore processes without real file path
-            if not data.get("PATH"):
-                continue
             if "PID" not in data:
                 continue
 
@@ -201,7 +200,7 @@ def run():
 
             if syscall == "execve":
                 profile.exec_path = data.get("PATH")
-
+                profile.file_path = data.get("ARG1")
             elif syscall == "openat":
                 profile.open_count += 1
                 if "PATH" in data:
@@ -216,8 +215,8 @@ def run():
             elif syscall == "renameat":
                 profile.rename_count += 1
                 profile.renamed_files.append({
-                    "old_path": data.get("PATH"),
-                    "new_path": data.get("NEW_PATH")
+                    "old_path": data.get("OLD"),
+                    "new_path": data.get("NEW")
                 })
 
             elif syscall == "unlinkat":

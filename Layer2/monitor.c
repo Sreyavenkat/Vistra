@@ -82,6 +82,7 @@ struct event {
 
     char path[MAX_PATH];
     char new_path[MAX_PATH];
+    char arg1[MAX_PATH];   
 };
 
 /* -------- SIGNAL -------- */
@@ -116,11 +117,19 @@ int handle_event(void *ctx, void *data, size_t size)
     }
 
     if (strcmp(e->syscall, "openat") == 0 ||
-        strcmp(e->syscall, "execve") == 0 ||
-        strcmp(e->syscall, "unlinkat") == 0) {
+    strcmp(e->syscall, "unlinkat") == 0) {
 
         if (e->path[0] != '\0')
             fprintf(f, " | PATH=%s", e->path);
+    }
+
+    if (strcmp(e->syscall, "execve") == 0) {
+
+        if (e->path[0] != '\0')
+            fprintf(f, " | PATH=%s", e->path);
+
+        if (e->arg1[0] != '\0')
+            fprintf(f, " | ARG1=%s", e->arg1);
     }
 
     if (strcmp(e->syscall, "renameat") == 0) {
