@@ -6,4 +6,4 @@ Run monitor
 Compile scanner.cpp
     g++ scanner.cpp -o scanner -lyara
 Run scanner
-    ./scanner
+    ./scanner  
