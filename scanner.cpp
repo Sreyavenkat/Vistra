@@ -22,6 +22,7 @@ int total_files_scanned = 0;
 int total_quarantined = 0;
 int total_deleted = 0;
 int total_rule_matches = 0;
+int lastProgress = -1;
 
 map<string , int> rule_hit_counts;
 
@@ -245,8 +246,86 @@ void spinner() {
     cout << "\r"; // clear spinner line
 }
 
+#include <iostream>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <cstring>
+
+using namespace std;
+
+int sockfd;
+
+#pragma pack(push, 1)
+typedef struct Frame {
+    int type;
+    float value;
+} Frame;
+#pragma pack(pop)
+
+void setupSocket() {
+    const char* SERVER_IP = "127.0.0.1";
+    int PORT = 9000;
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        throw runtime_error("Socket creation failed");
+    }
+
+    sockaddr_in serverAddr;
+    memset(&serverAddr, 0, sizeof(serverAddr));
+
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(PORT);
+
+    if (inet_pton(AF_INET, SERVER_IP, &serverAddr.sin_addr) <= 0) {
+        throw runtime_error("Invalid address");
+    }
+
+    if (connect(sockfd, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        close(sockfd);
+        throw runtime_error("Connection failed");
+    }
+
+    cout << "[+] Connected to Python server\n";
+}
+
+
+void sendFrame(int type, float value) {
+    uint32_t t = htonl(type);
+
+    uint32_t v;
+    memcpy(&v, &value, sizeof(float));
+    v = htonl(v);
+
+    char buffer[8];
+    memcpy(buffer, &t, 4);
+    memcpy(buffer + 4, &v, 4);
+
+    send(sockfd, buffer, 8, 0);
+}
+
+void connectWithRetry() {
+    int delay = 2;
+
+    Frame f;
+
+    while (true) {
+        try {
+            setupSocket();
+            break;
+        } catch (const exception& e) {
+            cout << "[!] " << e.what() << " | Retrying in " << delay << "s\n";
+            this_thread::sleep_for(chrono::seconds(delay));
+            delay = min(delay * 2, 30);
+        }
+    }
+}
+
 /* ---------------- MAIN ---------------- */
 int main() {
+
+    connectWithRetry();
+
     const string SCAN_DIR = "/";      
     const string RULE_DIR = "Yara";   
 
@@ -294,6 +373,7 @@ int main() {
         if (!entry.is_regular_file()) continue;
 
         total_eligible_files++;
+        cout << total_eligible_files << '\n';
     }
     cout << "[+] Found " << total_eligible_files << " eligible files.\n" << endl;
 
@@ -321,6 +401,11 @@ int main() {
 
         // Progress Bar Calculation
         float progress = (total_eligible_files > 0) ? ((float)files_processed / total_eligible_files * 100) : 100.0f;
+        int current = (int)progress;
+        if(lastProgress != current) {
+            lastProgress = current;
+            sendFrame(0,current);
+        }
         int barWidth = 40;
         string bar = "[";
         int pos = barWidth * (progress / 100.0);
@@ -398,4 +483,4 @@ int main() {
     yr_finalize();
 
     return 0;
-}\
+}
