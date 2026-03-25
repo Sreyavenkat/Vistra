@@ -116,7 +116,7 @@ async def heartbeat(websocket):
         await websocket.send(json.dumps({
             "event": "ping"
         }))
-        print("pinging backend......")
+        #print("pinging backend......")
         await asyncio.sleep(5)
 async def start_socket_server(websocket):
     global server_instance
@@ -145,19 +145,57 @@ async def read_exact(reader, n):
 async def handle_client(reader, writer, websocket):
     addr = writer.get_extra_info('peername')
     print(f"[+] C++ client connected: {addr}")
-    print("🔥🔥🔥 HANDLE CLIENT TRIGGERED 🔥🔥🔥")
+
     try:
         while True:
-            data = await read_exact(reader, 8)
+            data = await read_exact(reader, 4)
             if not data:
                 break
 
-            type_, value = struct.unpack('!if', data)  # ! = network order
-            print("PROGRESSSSSSSSSSSSSSSSS", value)
-            await websocket.send(json.dumps({
-                "event": "SCAN_PROGRESS",
-                "value": value
-            }))
+            # Try reading as old frame
+            (type,) = struct.unpack('!i', data)
+
+             # 🟢 CASE 1: FRAME (type + float)
+            if type != 999:
+                rest = await read_exact(reader, 4)
+                if not rest:
+                    break
+
+                (value,) = struct.unpack('!f', rest)
+
+                print("PROGRESS:", value, type)
+
+                if type == 1:
+                    await websocket.send(json.dumps({
+                        "event": "SCAN_COMPLETED",
+                        "value": value,
+                        "type": type
+                    }))
+                else:
+                    await websocket.send(json.dumps({
+                        "event": "SCAN_PROGRESS",
+                        "value": value
+                    }))
+
+            # 🔴 CASE 2: COMPLETION (4 more ints)
+            else:
+                rest = await read_exact(reader, 16)
+                if not rest:
+                    break
+                totalThreats, quarantine, deletion, safe = struct.unpack('!iiii', rest)
+
+                print("📊 COMPLETION:")
+                print(totalThreats, quarantine, deletion, safe)
+
+                await websocket.send(json.dumps({
+                    "event": "FILE_RESULT",
+                    "value": {
+                        "totalThreats": totalThreats,
+                        "quarantine": quarantine,
+                        "deletion": deletion,
+                        "safe": safe
+                    }
+                }))
 
     except Exception as e:
         print(f"[!] Client error: {e}")

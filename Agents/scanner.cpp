@@ -257,8 +257,6 @@ void spinner() {
 #include <unistd.h>
 #include <cstring>
 
-using namespace std;
-
 int sockfd;
 
 #pragma pack(push, 1)
@@ -266,6 +264,17 @@ typedef struct Frame {
     int type;
     float value;
 } Frame;
+#pragma pack(pop)
+
+
+#pragma pack(push, 1)
+typedef struct Completion {
+    int type;
+    int totalThreats;
+    int quarantine;
+    int deletion;
+    int safe;
+} Completion;
 #pragma pack(pop)
 
 void setupSocket() {
@@ -310,6 +319,24 @@ void sendFrame(int type, float value) {
     send(sockfd, buffer, 8, 0);
 }
 
+void sendCompletion(Completion comp) {
+    uint32_t t  = htonl(comp.type);
+    uint32_t t1 = htonl(comp.totalThreats);
+    uint32_t t2 = htonl(comp.quarantine);
+    uint32_t t3 = htonl(comp.deletion);
+    uint32_t t4 = htonl(comp.safe);
+
+    char buffer[20]; // ✅ FIXED (5 ints)
+
+    memcpy(buffer,      &t,  4);
+    memcpy(buffer + 4,  &t1, 4);
+    memcpy(buffer + 8,  &t2, 4);
+    memcpy(buffer + 12, &t3, 4);
+    memcpy(buffer + 16, &t4, 4);
+
+    send(sockfd, buffer, 20, 0);
+}
+
 void connectWithRetry() {
     int delay = 2;
 
@@ -334,7 +361,7 @@ int main() {
 
     const string SCAN_DIR = TEST_MODE ? TEST_SCAN_DIR : "/";     
     const string RULE_DIR = "Yara";   
-
+    Completion comFrame;
     yr_initialize();
 
     /* ----------- RULE COMPILATION ----------- */
@@ -363,101 +390,206 @@ int main() {
     int total_eligible_files = 0;
     cout << "[*] Calculating total files for progress bar..." << endl;
 
-    for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
-         it != fs::recursive_directory_iterator(); ++it) {
-        
-        const auto& entry = *it;
+    if (TEST_MODE) {
+        for (const auto& entry : fs::directory_iterator(SCAN_DIR)) {
 
-        // Dynamic Filtering - Must match main scan exactly
-        auto ext = entry.path().extension().string();
-        if (ignore_ext.count(ext)) continue;
+            auto ext = entry.path().extension().string();
+            if (ignore_ext.count(ext)) continue;
 
-        if (should_skip_path(entry.path())) {
-            it.disable_recursion_pending();
-            continue;
+            if (should_skip_path(entry.path())) continue;
+            if (!entry.is_regular_file()) continue;
+
+            total_eligible_files++;
         }
-        if (!entry.is_regular_file()) continue;
+    } else {
+        for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
+            it != fs::recursive_directory_iterator(); ++it) {
 
-        total_eligible_files++;
-        //cout << total_eligible_files << '\n';
+            const auto& entry = *it;
+
+            auto ext = entry.path().extension().string();
+            if (ignore_ext.count(ext)) continue;
+
+            if (should_skip_path(entry.path())) {
+                it.disable_recursion_pending();
+                continue;
+            }
+
+            if (!entry.is_regular_file()) continue;
+
+            total_eligible_files++;
+        }
     }
     cout << "[+] Found " << total_eligible_files << " eligible files.\n" << endl;
 
-    /* ----------- 2. RECURSIVE SCAN (Preserving Your Logic) ----------- */
+    /* ----------- 2. RECURSIVE / NON-RECURSIVE SCAN ----------- */
     int files_processed = 0;
 
-    for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
-         it != fs::recursive_directory_iterator(); ++it) {
-                
-        const auto& entry = *it;
+    if (TEST_MODE) {
 
-        // FILTERS (Mirror of Pre-scan)
-        auto ext = entry.path().extension().string();
-        if (ignore_ext.count(ext)) continue;
-        
-        if (should_skip_path(entry.path())) {
-            it.disable_recursion_pending();
-            continue;
+        for (const auto& entry : fs::directory_iterator(SCAN_DIR)) {
+
+            // FILTERS
+            auto ext = entry.path().extension().string();
+            if (ignore_ext.count(ext)) continue;
+
+            if (should_skip_path(entry.path())) continue;
+            if (!entry.is_regular_file()) continue;
+
+            // Counters
+            files_processed++;
+            total_files_scanned++;
+
+            // Progress
+            float progress = (total_eligible_files > 0)
+                ? ((float)files_processed / total_eligible_files * 100)
+                : 100.0f;
+
+            int current = (int)progress;
+
+            int barWidth = 40;
+            string bar = "[";
+            int pos = barWidth * (progress / 100.0);
+
+            for (int i = 0; i < barWidth; ++i) {
+                if (i < pos) bar += "=";
+                else if (i == pos) bar += ">";
+                else bar += " ";
+            }
+
+            bar += "] " + to_string((int)progress) + "%";
+
+            string current_path = entry.path().string();
+            if (current_path.length() > 35) {
+                current_path = "..." + current_path.substr(current_path.length() - 32);
+            }
+
+            cout << "\r" << bar << " | Scanning: "
+                << left << setw(35) << current_path << flush;
+
+            // -------- SCAN LOGIC --------
+            total_severity = 0;
+            suggested_action = "ignore";
+            matched_rules.clear();
+            final_decision_text = "[OK] CLEAN FILE";
+
+            ScanContext scanCtx;
+            scanCtx.file_path = entry.path().string();
+
+            scanning_done = false;
+            thread spin_thread(spinner);
+
+            yr_rules_scan_file(rules, entry.path().c_str(), 0, yara_callback, &scanCtx, 0);
+
+            scanning_done = true;
+            spin_thread.join();
+
+            // -------- DECISION --------
+            if (total_severity >= DELETE_THRESHOLD) {
+                final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
+                total_deleted++;
+                log_detection_event(scanCtx.file_path, "Delete", total_severity);
+            }
+            else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
+                final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
+                total_quarantined++;
+                log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
+            }
+            if (lastProgress != current) {
+                lastProgress = current;
+                sendFrame(0, current);
+            }
+            if(current == 17){
+                cout << "18 has reached";
+                break;
+            }
+            //write_report(entry.path());
         }
-        if (!entry.is_regular_file()) continue;
 
-        // Increment dynamic counters
-        files_processed++;
-        total_files_scanned++; 
+    } else {
 
-        // Progress Bar Calculation
-        float progress = (total_eligible_files > 0) ? ((float)files_processed / total_eligible_files * 100) : 100.0f;
-        int current = (int)progress;
-        if(lastProgress != current) {
-            lastProgress = current;
-            sendFrame(0,current);
+        for (auto it = fs::recursive_directory_iterator(SCAN_DIR, fs::directory_options::skip_permission_denied);
+            it != fs::recursive_directory_iterator(); ++it) {
+
+            const auto& entry = *it;
+
+            // FILTERS
+            auto ext = entry.path().extension().string();
+            if (ignore_ext.count(ext)) continue;
+
+            if (should_skip_path(entry.path())) {
+                it.disable_recursion_pending();
+                continue;
+            }
+
+            if (!entry.is_regular_file()) continue;
+
+            // Counters
+            files_processed++;
+            total_files_scanned++;
+
+            // Progress
+            float progress = (total_eligible_files > 0)
+                ? ((float)files_processed / total_eligible_files * 100)
+                : 100.0f;
+
+            int current = (int)progress;
+
+            int barWidth = 40;
+            string bar = "[";
+            int pos = barWidth * (progress / 100.0);
+
+            for (int i = 0; i < barWidth; ++i) {
+                if (i < pos) bar += "=";
+                else if (i == pos) bar += ">";
+                else bar += " ";
+            }
+
+            bar += "] " + to_string((int)progress) + "%";
+
+            string current_path = entry.path().string();
+            if (current_path.length() > 35) {
+                current_path = "..." + current_path.substr(current_path.length() - 32);
+            }
+
+            cout << "\r" << bar << " | Scanning: "
+                << left << setw(35) << current_path << flush;
+
+            // -------- SCAN LOGIC --------
+            total_severity = 0;
+            suggested_action = "ignore";
+            matched_rules.clear();
+            final_decision_text = "[OK] CLEAN FILE";
+
+            ScanContext scanCtx;
+            scanCtx.file_path = entry.path().string();
+
+            scanning_done = false;
+            thread spin_thread(spinner);
+
+            yr_rules_scan_file(rules, entry.path().c_str(), 0, yara_callback, &scanCtx, 0);
+
+            scanning_done = true;
+            spin_thread.join();
+
+            // -------- DECISION --------
+            if (total_severity >= DELETE_THRESHOLD) {
+                final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
+                total_deleted++;
+                log_detection_event(scanCtx.file_path, "Delete", total_severity);
+            }
+            else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
+                final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
+                total_quarantined++;
+                log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
+            }
+
+             if (lastProgress != current) {
+                lastProgress = current;
+                sendFrame(0, current);
+            }
+            //write_report(entry.path());
         }
-        int barWidth = 40;
-        string bar = "[";
-        int pos = barWidth * (progress / 100.0);
-        for (int i = 0; i < barWidth; ++i) {
-            if (i < pos) bar += "=";
-            else if (i == pos) bar += ">";
-            else bar += " ";
-        }
-        bar += "] " + to_string((int)progress) + "%";
-
-        // Hybrid UI: Overwrite line with Bar + Path
-        string current_path = entry.path().string();
-        if (current_path.length() > 35) {
-            current_path = "..." + current_path.substr(current_path.length() - 32);
-        }
-        cout << "\r" << bar << " | Scanning: " << left << setw(35) << current_path << flush;
-
-        // YOUR EXISTING SCAN LOGIC
-        total_severity = 0;
-        suggested_action = "ignore";
-        matched_rules.clear();
-        final_decision_text = "[OK] CLEAN FILE";
-
-        ScanContext scanCtx;
-        scanCtx.file_path = entry.path().string();
-
-        scanning_done = false;
-        thread spin_thread(spinner); // Preserving your spinner logic
-
-        yr_rules_scan_file(rules, entry.path().c_str(), 0, yara_callback, &scanCtx, 0);
-
-        scanning_done = true;
-        spin_thread.join();
-
-        if (total_severity >= DELETE_THRESHOLD) {
-            final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
-            total_deleted++;
-            log_detection_event(scanCtx.file_path, "Delete", total_severity);
-        }
-        else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
-            final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
-            total_quarantined++;
-            log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
-        }
-
-        //write_report(entry.path());
     }
 
     /* ----------- 3. ANALYTICS (No Hardcoding) ----------- */
@@ -485,10 +617,17 @@ int main() {
     cout << " Files Deleted:           " << total_deleted << endl;
     cout << string(50, '=') << endl;
 
-
-    cout << "program complete";
+    sendFrame(1,100);
+    comFrame.type = 999;
+    comFrame.deletion = total_deleted;
+    comFrame.quarantine = total_quarantined;
+    comFrame.safe = total_files_scanned - total_deleted + total_quarantined;
+    comFrame.totalThreats = total_deleted + total_quarantined;
+    cout << total_deleted << total_quarantined << comFrame.safe << comFrame.totalThreats;
+    sendCompletion(comFrame);
+    
     yr_rules_destroy(rules);
     yr_finalize();
-
+    cout << "program complete";
     return 0;
 }
