@@ -26,6 +26,12 @@ int lastProgress = -1;
 
 map<string , int> rule_hit_counts;
 
+
+/* ---------------- TEST MODE ---------------- */
+#define TEST_MODE 1
+
+const string TEST_SCAN_DIR = "/home/kichu/Downloads";
+
 /* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {
     string file_path;
@@ -326,7 +332,7 @@ int main() {
 
     connectWithRetry();
 
-    const string SCAN_DIR = "/";      
+    const string SCAN_DIR = TEST_MODE ? TEST_SCAN_DIR : "/";     
     const string RULE_DIR = "Yara";   
 
     yr_initialize();
@@ -373,7 +379,7 @@ int main() {
         if (!entry.is_regular_file()) continue;
 
         total_eligible_files++;
-        cout << total_eligible_files << '\n';
+        //cout << total_eligible_files << '\n';
     }
     cout << "[+] Found " << total_eligible_files << " eligible files.\n" << endl;
 
@@ -451,7 +457,7 @@ int main() {
             log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
         }
 
-        write_report(entry.path());
+        //write_report(entry.path());
     }
 
     /* ----------- 3. ANALYTICS (No Hardcoding) ----------- */
@@ -479,6 +485,8 @@ int main() {
     cout << " Files Deleted:           " << total_deleted << endl;
     cout << string(50, '=') << endl;
 
+
+    cout << "program complete";
     yr_rules_destroy(rules);
     yr_finalize();
 
