@@ -3,6 +3,7 @@ import websockets
 import json
 import uuid
 import struct
+import os
 def get_device_id():
     try:
         with open("/etc/machine-id", "r") as f:
@@ -72,8 +73,40 @@ async def handle_message(message,websocket):
             print("[*] Stopping scan...")
 
         elif event == "DELETE_FILE":
-            file_id = data.get("file_id")
-            print(f"[*] Delete file request: {file_id}")
+            scanId = data.get("scanId")
+            file_name = data.get("fileName")
+            file_path = data.get("filePath")
+            # 🔥 Build full file path
+            full_path = os.path.join(file_path, file_name)
+
+            print(f"[*] Delete file request: {scanId, file_name, full_path}")
+
+            try:
+                # ✅ Check if file exists
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+                    print(f"[+] File deleted: {full_path}")
+
+                    response = {
+                        "status": "success",
+                        "message": f"{file_name} deleted"
+                    }
+                else:
+                    print(f"[!] File not found: {full_path}")
+
+                    response = {
+                        "status": "error",
+                        "message": "File not found"
+                    }
+                
+            except Exception as e:
+                print(f"[!] Error deleting file: {e}")
+
+                response = {
+                    "status": "error",
+                    "message": str(e)
+                }
+
 
     except Exception as e:
         print(f"[!] Error parsing message: {e}")
