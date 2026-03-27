@@ -5,6 +5,7 @@ import uuid
 import struct
 import os
 import stat
+import shutil
 def get_device_id():
     try:
         with open("/etc/machine-id", "r") as f:
@@ -141,27 +142,21 @@ async def handle_message(message,websocket):
                 print("[+] Full quarantine path",full_quarantine_path)
                 if os.path.exists(full_quarantine_path):
 
-                    # ✅ Ensure original directory exists
                     os.makedirs(file_path, exist_ok=True)
 
-                    # ✅ Move file back to original location
-                    os.rename(full_quarantine_path, full_path)
+                    # 1. Move file
+                    shutil.move(full_quarantine_path, full_path)
+
                     print(f"[+] File restored to original location: {full_path}")
 
-                    # ✅ Restore permissions
-                    restore_original_permissions(full_quarantine_path)
-
-                    # ✅ Delete metadata file after restoring permissions
-                    meta_path = full_path + ".meta"
-                    if os.path.exists(meta_path):
-                        os.remove(meta_path)
-                        print(f"[+] Metadata file deleted: {meta_path}")
+                    # 2. Set permissions (same as your C++ chmod)
+                    os.chmod(full_path, 0o600)
+                    print(f"[+] Permissions set to 600 for: {full_path}")
 
                     response = {
                         "status": "success",
                         "message": f"{file_name} restored successfully"
-                    }
-
+                        }               
                 else:
                     print(f"[!] File not found in quarantine: {full_quarantine_path}")
 
