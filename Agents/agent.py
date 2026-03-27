@@ -4,6 +4,8 @@ import json
 import uuid
 import struct
 import os
+import stat
+import shutil
 def get_device_id():
     try:
         with open("/etc/machine-id", "r") as f:
@@ -19,6 +21,22 @@ PATH = ""
 server_instance = None
 server_task = None
 
+def restore_original_permissions(quarantinePath):
+    meta_path = quarantinePath + ".meta"
+
+    if not os.path.exists(meta_path):
+        print("[!] No metadata found")
+        return
+
+    try:
+        with open(meta_path, "r") as f:
+            mode = int(f.read())
+
+        os.chmod(quarantinePath, mode)
+        print(f"[+] Restored original permissions for: {quarantinePath}")
+
+    except Exception as e:
+        print(f"[!] Failed to restore permissions: {e}")
 
 async def run_cpp_scanner(websocket):
     try:
@@ -111,8 +129,53 @@ async def handle_message(message,websocket):
                     "status": "error",
                     "message": str(e)
                 }
+        elif event == "KEEP_FILE":
+            scanId = data.get("scanId")
+            file_name = data.get("fileName")
+            file_path = data.get("filePath")
+            
+            # 🔥 Original location
+            full_path = os.path.join(file_path, file_name)
 
+            quarantinePath = data.get("quarantinePath")
+            full_quarantine_path = os.path.join(quarantinePath, file_name)
 
+            print(f"[*] Keep file request: {scanId, file_name, full_path, full_quarantine_path}")
+
+            try:
+                print("[+] Full quarantine path",full_quarantine_path)
+                if os.path.exists(full_quarantine_path):
+
+                    os.makedirs(file_path, exist_ok=True)
+
+                    # 1. Move file
+                    shutil.move(full_quarantine_path, full_path)
+
+                    print(f"[+] File restored to original location: {full_path}")
+
+                    # 2. Set permissions (same as your C++ chmod)
+                    os.chmod(full_path, 0o600)
+                    print(f"[+] Permissions set to 600 for: {full_path}")
+
+                    response = {
+                        "status": "success",
+                        "message": f"{file_name} restored successfully"
+                        }               
+                else:
+                    print(f"[!] File not found in quarantine: {full_quarantine_path}")
+
+                    response = {
+                        "status": "error",
+                        "message": "File not found in quarantine"
+                    }
+
+            except Exception as e:
+                print(f"[!] Error restoring file: {e}")
+
+                response = {
+                    "status": "error",
+                    "message": str(e)
+                }
     except Exception as e:
         print(f"[!] Error parsing message: {e}")
 
@@ -226,8 +289,7 @@ async def handle_client(reader, writer, websocket):
                 print(totalThreats, quarantine, deletion, safe)
 
                 await websocket.send(json.dumps({
-                    "event": "FILE_RESULT",
-                    "scan_id": current_scan_id,
+                    "event": "FILE_COUNT",
                     "value": {
                         "totalThreats": totalThreats,
                         "quarantine": quarantine,

@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <unordered_set>
 #include <iomanip>
+#include <sys/stat.h>
+#include <fstream>
 
 vector<string> deleted_files;
 vector<string> quarantined_files;
@@ -33,7 +35,7 @@ map<string , int> rule_hit_counts;
 /* ---------------- TEST MODE ---------------- */
 #define TEST_MODE 1
 
-const string TEST_SCAN_DIR = "/home/kichu/Downloads";
+const string TEST_SCAN_DIR = "/home/kichu/Downloads/FILESS";
 
 /* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {
@@ -182,8 +184,18 @@ int yara_callback(
     return CALLBACK_CONTINUE;
 }
 
+
+void save_metadata(const fs::path& file, const fs::path& dest) {
+    struct stat st;
+    stat(file.c_str(), &st);
+
+    ofstream meta(dest.string() + ".meta");
+    meta << st.st_mode;
+}
+
 /* ---------------- FILE MOVE (SAFE) ---------------- */
 void move_file_to_folder(const fs::path& file, const string& folder) {
+    cout<<"reached move to folder";
     fs::create_directory(folder);
 
     fs::path dest = fs::path(folder) /
@@ -193,13 +205,18 @@ void move_file_to_folder(const fs::path& file, const string& folder) {
 
     try {
         fs::rename(file, dest);
-        cout << "  [→] Moved to " << folder << endl;
+        save_metadata(file, dest);
+        // 🔒 Remove execution permissions (owner, group, others)
+        chmod(dest.c_str(), S_IRUSR | S_IWUSR);
+
+        cout << "  [→] Moved & quarantined: " << dest << endl;
     } catch (...) {
         cerr << "  [!] Failed to move file\n";
     }
 }
 
 void quarantine_file(const fs::path& file) {
+    cout << file;
     move_file_to_folder(file, "Quarantine");
 }
 
@@ -467,8 +484,7 @@ int main() {
                 current_path = "..." + current_path.substr(current_path.length() - 32);
             }
 
-            cout << "\r" << bar << " | Scanning: "
-                << left << setw(35) << current_path << flush;
+            //cout << "\r" << bar << " | Scanning: " << left << setw(35) << current_path << flush;
 
             // -------- SCAN LOGIC --------
             total_severity = 0;
@@ -497,6 +513,7 @@ int main() {
             else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
                 final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
                 total_quarantined++;
+                quarantine_file(scanCtx.file_path);
                 log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
                 quarantined_files.push_back(scanCtx.file_path);   //for getting quaratined file name
             }
@@ -504,11 +521,12 @@ int main() {
                 lastProgress = current;
                 sendFrame(0, current);
             }
-            if(current == 17){
-                cout << "18 has reached";
-                break;
-            }
+            // if(current == 17){
+            //     cout << "18 has reached";
+            //     break;
+            // }
             //write_report(entry.path());
+            cout << final_decision_text;
         }
 
     } else {
@@ -586,6 +604,7 @@ int main() {
             else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
                 final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
                 total_quarantined++;
+                quarantine_file(scanCtx.file_path);
                 log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
             }
 
