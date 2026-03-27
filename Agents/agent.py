@@ -19,6 +19,7 @@ PATH = ""
 server_instance = None
 server_task = None
 
+
 async def run_cpp_scanner(websocket):
     try:
         process = await asyncio.create_subprocess_exec(
@@ -51,7 +52,8 @@ async def run_cpp_scanner(websocket):
         print("[+] Scan finished")
 
         await websocket.send(json.dumps({
-            "event": "SCAN_COMPLETE"
+            "event": "SCAN_COMPLETED",
+            "scan_id": current_scan_id
         }))
 
     except Exception as e:
@@ -64,7 +66,10 @@ async def handle_message(message,websocket):
 
         print(f"[+] Event received: {event}")
 
-        if event == "START_SCAN":
+        if event == "SCAN_STARTED":
+            global current_scan_id
+            current_scan_id = data.get("scan_id")
+            print(f"[+] Scan ID received: {current_scan_id}")
             print("[*] Starting scan...")
             # trigger your C++ scanner or logic
             asyncio.create_task(run_cpp_scanner(websocket))
@@ -222,6 +227,7 @@ async def handle_client(reader, writer, websocket):
 
                 await websocket.send(json.dumps({
                     "event": "FILE_RESULT",
+                    "scan_id": current_scan_id,
                     "value": {
                         "totalThreats": totalThreats,
                         "quarantine": quarantine,

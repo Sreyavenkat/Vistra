@@ -15,6 +15,9 @@
 #include <unordered_set>
 #include <iomanip>
 
+vector<string> deleted_files;
+vector<string> quarantined_files;
+
 using namespace std;
 namespace fs = filesystem;
 
@@ -489,11 +492,13 @@ int main() {
                 final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
                 total_deleted++;
                 log_detection_event(scanCtx.file_path, "Delete", total_severity);
+                deleted_files.push_back(scanCtx.file_path);      //for getting deleted file name
             }
             else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
                 final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
                 total_quarantined++;
                 log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
+                quarantined_files.push_back(scanCtx.file_path);   //for getting quaratined file name
             }
             if (lastProgress != current) {
                 lastProgress = current;
