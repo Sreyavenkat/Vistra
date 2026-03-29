@@ -17,8 +17,9 @@
 #include <sys/stat.h>
 #include <fstream>
 
-vector<string> deleted_files;
-vector<string> quarantined_files;
+#define TYPE_FILE_BATCH 1001
+
+std::vector<std::string> fileResultsJson;
 
 using namespace std;
 namespace fs = filesystem;
@@ -35,7 +36,7 @@ map<string , int> rule_hit_counts;
 /* ---------------- TEST MODE ---------------- */
 #define TEST_MODE 1
 
-const string TEST_SCAN_DIR = "/home/kichu/Downloads/FILESS";
+const string TEST_SCAN_DIR = "/home/sreyav/Downloads";
 
 /* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {
@@ -194,7 +195,7 @@ void save_metadata(const fs::path& file, const fs::path& dest) {
 }
 
 /* ---------------- FILE MOVE (SAFE) ---------------- */
-void move_file_to_folder(const fs::path& file, const string& folder) {
+fs::path move_file_to_folder(const fs::path& file, const string& folder) {
     cout<<"reached move to folder";
     fs::create_directory(folder);
 
@@ -213,6 +214,8 @@ void move_file_to_folder(const fs::path& file, const string& folder) {
     } catch (...) {
         cerr << "  [!] Failed to move file\n";
     }
+
+    return dest;
 }
 
 void quarantine_file(const fs::path& file) {
@@ -504,19 +507,51 @@ int main() {
             spin_thread.join();
 
             // -------- DECISION --------
+            // store original details BEFORE modifying file
+            std::string original_path = entry.path().string();
+            std::string file_name = entry.path().filename().string();
+
+            std::string action = "";
+            std::string quarantined_path = "";
+
             if (total_severity >= DELETE_THRESHOLD) {
                 final_decision_text = "[!!!] CONFIRMED RANSOMWARE → DELETE";
                 total_deleted++;
-                log_detection_event(scanCtx.file_path, "Delete", total_severity);
-                deleted_files.push_back(scanCtx.file_path);      //for getting deleted file name
+
+                action = "delete";
+
+                // delete file
+                try {
+                    fs::remove(entry.path());
+                } catch (...) {
+                    cerr << "Failed to delete file\n";
+                }
             }
+
             else if (total_severity >= QUARANTINE_THRESHOLD || suggested_action == "quarantine") {
                 final_decision_text = "[!!] SUSPICIOUS FILE → QUARANTINE";
                 total_quarantined++;
-                quarantine_file(scanCtx.file_path);
-                log_detection_event(scanCtx.file_path, "Quarantine", total_severity);
-                quarantined_files.push_back(scanCtx.file_path);   //for getting quaratined file name
+
+                action = "quarantine";
+
+                fs::path dest = move_file_to_folder(entry.path(), "Quarantine");
+                quarantined_path = dest.string();  // ✅ IMPORTANT
             }
+
+            // ✅ Store ONLY if needed
+            if (action != "") {
+                std::string jsonStr = "{";
+                jsonStr += "\"file_name\": \"" + file_name + "\",";
+                jsonStr += "\"file_path\": \"" + original_path + "\",";
+                jsonStr += "\"quarantined_path\": \"" + quarantined_path + "\",";
+                jsonStr += "\"action\": \"" + action + "\",";
+                jsonStr += "\"severity\": " + std::to_string(total_severity) + ",";
+                jsonStr += "\"layer\": 1";
+                jsonStr += "}";
+
+            fileResultsJson.push_back(jsonStr);
+            }
+            
             if (lastProgress != current) {
                 lastProgress = current;
                 sendFrame(0, current);
@@ -645,10 +680,38 @@ int main() {
     comFrame.type = 999;
     comFrame.deletion = total_deleted;
     comFrame.quarantine = total_quarantined;
-    comFrame.safe = total_files_scanned - total_deleted + total_quarantined;
+    comFrame.safe = total_files_scanned - (total_deleted + total_quarantined);
     comFrame.totalThreats = total_deleted + total_quarantined;
     cout << total_deleted << total_quarantined << comFrame.safe << comFrame.totalThreats;
     sendCompletion(comFrame);
+
+    
+
+
+    if (!fileResultsJson.empty()) {
+
+        std::string finalJson = "{ \"event\": \"FILES_BATCH\", \"files\": [";
+
+        for (size_t i = 0; i < fileResultsJson.size(); i++) {
+            finalJson += fileResultsJson[i];
+            if (i != fileResultsJson.size() - 1) {
+                finalJson += ",";
+            }
+        }
+
+        finalJson += "]}";
+
+        uint32_t type = htonl(1001);
+        uint32_t length = htonl(finalJson.size());
+
+        send(sockfd, &type, 4, 0);
+        send(sockfd, &length, 4, 0);
+        send(sockfd, finalJson.c_str(), finalJson.size(), 0);
+
+        std::cout << "📤 Sent FILES_BATCH to agent\n";
+    }
+
+
     
     yr_rules_destroy(rules);
     yr_finalize();
