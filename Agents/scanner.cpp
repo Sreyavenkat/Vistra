@@ -36,7 +36,7 @@ map<string , int> rule_hit_counts;
 /* ---------------- TEST MODE ---------------- */
 #define TEST_MODE 1
 
-const string TEST_SCAN_DIR = "/home/sreyav/Downloads";
+const string TEST_SCAN_DIR = "/home/kichu/Downloads/FILESS";
 
 /* ---------------- SCAN CONTEXT ---------------- */
 struct ScanContext {

@@ -22,7 +22,7 @@ server_instance = None
 server_task = None
 
 current_scan_id = None
-
+current_device_id = None
 def restore_original_permissions(quarantinePath):
     meta_path = quarantinePath + ".meta"
 
@@ -73,7 +73,8 @@ async def run_cpp_scanner(websocket):
 
         await websocket.send(json.dumps({
             "event": "SCAN_COMPLETED",
-            "scan_id": current_scan_id
+            "scan_id": current_scan_id,
+
         }))
 
     except Exception as e:
@@ -88,11 +89,15 @@ async def handle_message(message,websocket):
 
         if event in ["START_SCAN", "SCAN_START"]:
             global current_scan_id
+            global current_device_id
             current_scan_id = data.get("scan_id")
+            current_device_id = data.get("device_id")
             print(f"[+] Event received: START_SCAN")
 
             await websocket.send(json.dumps({
-                "event": "START_SCAN"
+                "event": "START_SCAN",
+                "scan_id": current_scan_id,
+                "device_id": current_device_id
             }))
             print("[*] Starting scan...")
             # trigger your C++ scanner or logic
