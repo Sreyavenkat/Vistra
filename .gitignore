@@ -41,6 +41,8 @@
 *.dwo
 
 #code
-.env  
+.env
+
+venv/
 
 */Reports

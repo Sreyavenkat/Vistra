@@ -21,6 +21,8 @@ PATH = ""
 server_instance = None
 server_task = None
 
+current_scan_id = None
+
 def restore_original_permissions(quarantinePath):
     meta_path = quarantinePath + ".meta"
 
@@ -70,7 +72,8 @@ async def run_cpp_scanner(websocket):
         print("[+] Scan finished")
 
         await websocket.send(json.dumps({
-            "event": "SCAN_COMPLETE"
+            "event": "SCAN_COMPLETED",
+            "scan_id": current_scan_id
         }))
 
     except Exception as e:
@@ -83,7 +86,14 @@ async def handle_message(message,websocket):
 
         print(f"[+] Event received: {event}")
 
-        if event == "START_SCAN":
+        if event in ["START_SCAN", "SCAN_START"]:
+            global current_scan_id
+            current_scan_id = data.get("scan_id")
+            print(f"[+] Event received: START_SCAN")
+
+            await websocket.send(json.dumps({
+                "event": "START_SCAN"
+            }))
             print("[*] Starting scan...")
             # trigger your C++ scanner or logic
             asyncio.create_task(run_cpp_scanner(websocket))
@@ -253,7 +263,7 @@ async def handle_client(reader, writer, websocket):
             (type,) = struct.unpack('!i', data)
 
              # 🟢 CASE 1: FRAME (type + float)
-            if type != 999:
+            if type != 999 and type != 1001:
                 rest = await read_exact(reader, 4)
                 if not rest:
                     break
@@ -265,6 +275,7 @@ async def handle_client(reader, writer, websocket):
                 if type == 1:
                     await websocket.send(json.dumps({
                         "event": "SCAN_COMPLETED",
+                        "scan_id": current_scan_id,
                         "value": value,
                         "type": type
                     }))
@@ -275,7 +286,7 @@ async def handle_client(reader, writer, websocket):
                     }))
 
             # 🔴 CASE 2: COMPLETION (4 more ints)
-            else:
+            elif type == 999:
                 rest = await read_exact(reader, 16)
                 if not rest:
                     break
@@ -293,6 +304,42 @@ async def handle_client(reader, writer, websocket):
                         "safe": safe
                     }
                 }))
+                await websocket.send(json.dumps({
+                    "event": "FILE_RESULT",
+                    "scan_id": current_scan_id,
+                    "value": {
+                        "totalThreats": totalThreats,
+                        "quarantine": quarantine,
+                        "deletion": deletion,
+                        "safe": safe
+                    }
+                }))
+
+            elif type == 1001:
+                # 🔵 FILES BATCH (NEW)
+
+                # read length
+                length_data = await read_exact(reader, 4)
+                if not length_data:
+                    break
+
+                (length,) = struct.unpack('!i', length_data)
+
+                # read JSON
+                json_data = await read_exact(reader, length)
+                if not json_data:
+                    break
+
+                message = json.loads(json_data.decode())
+
+                print("📂 FILES_BATCH RECEIVED")
+
+                await websocket.send(json.dumps({
+                    "event": "FILES_BATCH",
+                    "scan_id": current_scan_id,
+                    "files": message.get("files", [])
+                }))
+                                
 
     except Exception as e:
         print(f"[!] Client error: {e}")
